@@ -1,8 +1,8 @@
 from django.core.paginator import Paginator
 from django.utils import timezone
-from job_downloader import PracujDownloader
-from models import Job
-from mailings import send_mail_with_offers
+from scraper.job_downloader import PracujDownloader
+from scraper.models import Job
+from scraper.mailings import send_mail_with_offers
 
 def download_and_send():
     # URLs for job search

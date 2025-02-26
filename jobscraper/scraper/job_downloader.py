@@ -2,7 +2,7 @@ import logging
 from bs4 import BeautifulSoup
 import requests
 
-from models import Company, Job
+from scraper.models import Company, Job
 
 logger = logging.getLogger(__name__)
 
