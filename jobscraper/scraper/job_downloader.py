@@ -55,32 +55,18 @@ class PracujDownloader:
             seniority=seniority.lower(),
             title=title,
             url=job_url,
+            description='',  # Add a default value for the required field
         )
 
-def _add_or_update_company(self, job_data):
-    company = job_data.find('h3')
-    company_url = company.parent.attrs.get('href')
-    company_name = company.text.lower().replace('sp. z o.o.', '')
-    
-    # Try to get the existing company, handle multiple results
-    try:
-        # First try exact match
-        existing_company = Company.objects.get(name=company_name)
-        # Update URL if needed
-        if existing_company.url != company_url:
-            existing_company.url = company_url
-            existing_company.save()
-        return existing_company
-    except Company.DoesNotExist:
-        # Create new company
-        return Company.objects.create(
+    def _add_or_update_company(self, job_data):
+        company = job_data.find('h3')
+        company_url = company.parent.attrs.get('href') or ''
+        company_name = company.text.lower()
+        
+        # Use the manager to properly handle company matching
+        return Company.objects.create_or_update_if_better(
             name=company_name,
             url=company_url,
             size_from=0,
             size_to=0,
         )
-    except Company.MultipleObjectsReturned:
-        # Handle duplicates by getting the first one
-        existing_company = Company.objects.filter(name=company_name).first()
-        logger.warning(f"Multiple companies found with name: {company_name}, using ID: {existing_company.id}")
-        return existing_company
