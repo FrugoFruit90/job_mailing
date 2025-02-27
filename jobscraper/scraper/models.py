@@ -21,6 +21,9 @@ class Company(models.Model):
 
     def __str__(self) -> str:
         return self.name
+        
+    class Meta:
+        db_table = 'grabbo_company'  # Use existing table
 
 class Job(models.Model):
     board = models.IntegerField(choices=JobBoard.choices)
@@ -36,3 +39,6 @@ class Job(models.Model):
 
     def __str__(self) -> str:
         return f'{self.title} in {self.company}'
+        
+    class Meta:
+        db_table = 'grabbo_job'  # Use existing table
