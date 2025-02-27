@@ -35,7 +35,6 @@ def download_and_send():
         .exclude(title__icontains='instruktor')
         .exclude(title__icontains='telemarketing')
         .exclude(title__icontains='call center')
-        .order_by('-lena_comparibility')
     )
 
     # Send emails in batches to avoid huge emails
