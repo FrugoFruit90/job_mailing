@@ -49,7 +49,7 @@ class PracujDownloader:
 
         Job.objects.create(
             original_id=job_id,
-            board='pracuj',
+            board=3,
             salary_text=salary,
             company=company,
             seniority=seniority.lower(),
