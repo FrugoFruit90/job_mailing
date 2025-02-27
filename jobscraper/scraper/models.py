@@ -24,6 +24,7 @@ class Company(models.Model):
         
     class Meta:
         db_table = 'grabbo_company'  # Use existing table
+        unique_together = ['name'] 
 
 class Job(models.Model):
     board = models.IntegerField(choices=JobBoard.choices)
