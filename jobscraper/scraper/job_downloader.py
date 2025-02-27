@@ -46,7 +46,7 @@ class PracujDownloader:
         seniority = job_data.find('div', attrs={'data-test': 'section-company'}).next_sibling.find('li').text
         company = self._add_or_update_company(job_data)
         title = job_data.find('h2', attrs={'data-test': 'offer-title'}).text
-
+    
         Job.objects.create(
             original_id=job_id,
             board=3,
@@ -55,7 +55,9 @@ class PracujDownloader:
             seniority=seniority.lower(),
             title=title,
             url=job_url,
-            description='',  # Add a default value for the required field
+            description='',  # Default value
+            requirements='',  # Default value
+            responsibilities='',  # Default value
         )
 
     def _add_or_update_company(self, job_data):
