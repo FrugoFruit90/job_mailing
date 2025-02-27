@@ -68,20 +68,43 @@ class Company(models.Model):
 class Job(models.Model):
     board = models.IntegerField(choices=JobBoard.choices)
     original_id = models.CharField(max_length=256)
-    company = models.ForeignKey(Company, on_delete=models.SET_NULL, null=True)
     title = models.CharField(max_length=256)
     url = models.CharField(max_length=256)
-    seniority = models.CharField(max_length=256, blank=True)
-    salary_text = models.CharField(max_length=256, blank=True)
+    company = models.ForeignKey(Company, on_delete=models.SET_NULL, null=True)
+    
+    # Fields missing in your model
+    description = models.TextField()  # NOT NULL
+    requirements = models.TextField()  # NOT NULL
+    responsibilities = models.TextField()  # NOT NULL
+    
+    # Additional foreign keys with null=True since they're nullable in DB
+    category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, db_column='category_id')
+    salary = models.ForeignKey('Salary', on_delete=models.SET_NULL, null=True, db_column='salary_id')
+    technology = models.ForeignKey('Technology', on_delete=models.SET_NULL, null=True, db_column='technology_id')
+    
+    seniority = models.CharField(max_length=256)
+    salary_text = models.CharField(max_length=256)
     status = models.IntegerField(choices=HypeStatus.choices, default=HypeStatus.UNKNOWN)
     created_at = models.DateTimeField(auto_now_add=True)
     lena_comparibility = models.FloatField(default=0.0)
-    # Adding fields that are required in the database but were missing in your model
-    description = models.TextField(null=True, blank=True)  # Required field
-    # Add any other missing fields here
 
     def __str__(self) -> str:
         return f'{self.title} in {self.company}'
         
     class Meta:
-        db_table = 'grabbo_job'  # Use existing table
+        db_table = 'grabbo_job'
+
+class Category(models.Model):
+    # Minimal implementation
+    class Meta:
+        db_table = 'grabbo_category'
+
+class Salary(models.Model):
+    # Minimal implementation
+    class Meta:
+        db_table = 'grabbo_salary'
+
+class Technology(models.Model):
+    # Minimal implementation
+    class Meta:
+        db_table = 'grabbo_technology'
