@@ -1,4 +1,7 @@
 import logging
+import random
+import time
+
 from bs4 import BeautifulSoup
 import requests
 
@@ -10,14 +13,36 @@ logger = logging.getLogger(__name__)
 class PracujDownloader:
     def download_jobs(self, filter_url):
         page_number = 1
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.pracuj.pl/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
         while True:
             url = f'{filter_url}&pn={page_number}'
-            response = requests.get(url, timeout=10)
-            try:
-                response.raise_for_status()
-            except requests.HTTPError:
-                logger.error('Could not get offers from pracuj.')
-                return
+
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    response = requests.get(url, headers=headers, timeout=10)
+                    response.raise_for_status()
+                    break  # Success, exit the loop
+                except requests.HTTPError as e:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        # Exponential backoff
+                        wait_time = 2 ** retry_count + random.uniform(0, 1)
+                        logger.warning(
+                            f"Request failed, retrying in {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error('Could not get offers from pracuj after multiple attempts.')
+                        return
 
             soup = BeautifulSoup(response.content, features='html.parser')
             jobs = soup.find('div', {'data-test': 'section-offers'})
@@ -55,9 +80,9 @@ class PracujDownloader:
             seniority=seniority.lower(),
             title=title,
             url=job_url,
-            description='',  # Default value
-            requirements='',  # Default value
-            responsibilities='',  # Default value
+            description='',
+            requirements='',
+            responsibilities='',
         )
 
     def _add_or_update_company(self, job_data):
