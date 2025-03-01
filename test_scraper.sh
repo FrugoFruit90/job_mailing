@@ -8,10 +8,12 @@ if [[ -z "$VIRTUAL_ENV" ]]; then
     exit 1
 fi
 
-# Check if EMAIL_RECIPIENTS environment variable is set
-if [[ -z "$EMAIL_RECIPIENTS" ]]; then
-    echo "EMAIL_RECIPIENTS environment variable not set. Using default email: janzysko@gmail.com"
-    export EMAIL_RECIPIENTS="janzysko@gmail.com"
+# Check if .env file exists
+if [[ -f ".env" ]]; then
+    echo "Found .env file. Using environment variables from there."
+else
+    echo "WARNING: No .env file found. Using default environment settings."
+    echo "Consider creating a .env file for better configuration."
 fi
 
 # Navigate to project directory
@@ -30,3 +32,4 @@ echo "Running test scraper..."
 python manage.py test_scraper --max-pages 1
 
 echo "Test completed."
+
