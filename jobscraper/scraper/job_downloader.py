@@ -54,13 +54,27 @@ class PracujDownloader:
                 except requests.HTTPError as e:
                     retry_count += 1
                     if retry_count < max_retries:
-                        # Exponential backoff
+                        # Calculate wait time first
                         wait_time = 2 ** retry_count + random.uniform(0, 1)
                         logger.warning(
-                            f"Request failed, retrying in {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})")
+                            f"HTTP error {e.response.status_code}: {e}. Retrying in {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})"
+                        )
                         time.sleep(wait_time)
                     else:
-                        logger.error('Could not get offers from pracuj after multiple attempts.')
+                        logger.error(f'Failed to get offers from pracuj after multiple attempts. Last error: {e}')
+                        return jobs_added
+                except requests.RequestException as e:
+                    # This will catch connection errors, timeouts, etc.
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        # Calculate wait time first
+                        wait_time = 2 ** retry_count + random.uniform(0, 1)
+                        logger.warning(
+                            f"Request error: {e}. Retrying in {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})"
+                        )
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f'Failed to connect to pracuj after multiple attempts. Last error: {e}')
                         return jobs_added
 
             soup = BeautifulSoup(response.content, features='html.parser')
