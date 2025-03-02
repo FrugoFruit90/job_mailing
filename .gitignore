@@ -18,3 +18,7 @@ ENV/
 .vscode/
 *.swp
 *.swo
+
+.env
+
+jobscraper/analyses
