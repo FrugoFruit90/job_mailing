@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 import time
 
@@ -42,13 +43,15 @@ class PracujDownloader:
                 break
 
             url = f'{filter_url}&pn={page_number}'
-            logger.info(f"Scraping page {page_number}: {url}")
+            logger.info(f"Scraping page {page_number} via AWS API Gateway: {url}")
 
             max_retries = 3
             retry_count = 0
             while retry_count < max_retries:
                 try:
-                    response = requests.get(url, headers=headers, timeout=10)
+                    # Instead of direct request, call through API Gateway
+                    gateway_url = f"{os.environ.get('AWS_API_GATEWAY_URL')}?url={url}"
+                    response = requests.get(gateway_url, timeout=15)
                     response.raise_for_status()
                     break  # Success, exit the loop
                 except requests.HTTPError as e:
