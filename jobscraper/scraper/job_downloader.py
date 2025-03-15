@@ -183,8 +183,8 @@ class PracujDownloader:
 
     async def _process_page_content(self, content):
         """Process page content in a memory-efficient way"""
-        # Use lxml parser which is faster and more memory efficient
-        soup = BeautifulSoup(content, 'lxml')
+        # Use the default HTML parser since lxml might not be available
+        soup = BeautifulSoup(content, 'html.parser')
 
         # Find the job listings section
         jobs_section = soup.find('div', {'data-test': 'section-offers'})
