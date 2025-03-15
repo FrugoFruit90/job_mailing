@@ -84,11 +84,6 @@ class PracujDownloader:
                 # Force garbage collection between batches
                 gc.collect()
 
-                # If we didn't find any jobs in this batch, we're probably done
-                if batch_jobs_added == 0:
-                    logger.info("No new jobs found in this batch. Stopping.")
-                    break
-
                 # Reset restart counter on successful batch
                 browser_restart_count = 0
 
