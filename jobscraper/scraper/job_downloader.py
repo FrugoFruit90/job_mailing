@@ -5,9 +5,10 @@ import asyncio
 from asyncio import Future
 from concurrent.futures import ThreadPoolExecutor
 import gc
+import sys
 
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, Error as PlaywrightError
 
 from scraper.models import Company, Job
 
@@ -39,147 +40,201 @@ class PracujDownloader:
         """Async implementation of download_jobs using Playwright"""
         jobs_added = 0
         page_number = 1
-        # Maximum pages to process per browser instance to avoid memory leaks
-        pages_per_browser = 5
-        current_browser_pages = 0
 
-        async with async_playwright() as p:
-            # Launch browser with minimal memory usage settings
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    '--disable-gpu',
-                    '--disable-dev-shm-usage',
-                    '--disable-setuid-sandbox',
-                    '--no-sandbox',
-                    '--single-process',  # Use single process to reduce memory
-                    '--disable-extensions',
-                    '--disable-features=site-per-process',  # Reduce process count
-                    '--js-flags=--max-old-space-size=128'  # Limit JS memory
-                ]
-            )
+        # Maximum pages to process before restarting browser
+        # Setting to a very small number to ensure browser gets restarted frequently
+        pages_per_browser = 2
+
+        # Keep track of browser restarts to prevent infinite loops
+        browser_restart_count = 0
+        max_browser_restarts = 5
+
+        while True:
+            # Exit if we've restarted the browser too many times
+            if browser_restart_count >= max_browser_restarts:
+                logger.error(f"Too many browser restarts ({browser_restart_count}). Stopping.")
+                break
+
+            # Check if we've reached the maximum number of pages to scrape
+            if max_pages and page_number > max_pages:
+                logger.info(f"Reached max pages limit ({max_pages}). Stopping.")
+                break
 
             try:
-                # Process pages until we're done or hit max_pages
-                while True:
-                    # Check if we need to restart the browser to clear memory
-                    if current_browser_pages >= pages_per_browser:
-                        logger.info(f"Restarting browser after {pages_per_browser} pages to clear memory")
-                        await browser.close()
-                        # Force garbage collection
-                        gc.collect()
-                        # Restart browser with same memory-saving settings
-                        browser = await p.chromium.launch(
-                            headless=True,
-                            args=[
-                                '--disable-gpu',
-                                '--disable-dev-shm-usage',
-                                '--disable-setuid-sandbox',
-                                '--no-sandbox',
-                                '--single-process',
-                                '--disable-extensions',
-                                '--disable-features=site-per-process',
-                                '--js-flags=--max-old-space-size=128'
-                            ]
-                        )
-                        current_browser_pages = 0
+                # Process a batch of pages with a fresh browser instance
+                logger.info(f"Starting new browser instance (restart #{browser_restart_count})")
+                batch_jobs_added = await self._process_batch(
+                    filter_url,
+                    start_page=page_number,
+                    max_pages=pages_per_browser if not max_pages else min(pages_per_browser,
+                                                                          max_pages - page_number + 1)
+                )
 
-                    # Check if we've reached the maximum number of pages to scrape
-                    if max_pages and page_number > max_pages:
-                        logger.info(f"Reached max pages limit ({max_pages}). Stopping.")
-                        break
+                if batch_jobs_added < 0:
+                    # Negative return indicates an error, retry with a fresh browser
+                    logger.warning("Browser error detected. Restarting browser.")
+                    browser_restart_count += 1
+                    # Don't increment page_number - retry the same page
+                    continue
 
-                    url = f'{filter_url}&pn={page_number}'
-                    logger.info(f"Scraping page {page_number}: {url}")
+                # Update counters
+                jobs_added += batch_jobs_added
+                page_number += pages_per_browser
 
-                    # Create a new context for each page to isolate memory
-                    context = await browser.new_context(
-                        viewport={'width': 1280, 'height': 800},
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
-                    )
+                # Force garbage collection between batches
+                gc.collect()
 
-                    # Set up a new page with limited permissions and features
-                    page = await context.new_page()
-                    await page.set_extra_http_headers({
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Referer': 'https://www.pracuj.pl/'
-                    })
+                # If we didn't find any jobs in this batch, we're probably done
+                if batch_jobs_added == 0:
+                    logger.info("No new jobs found in this batch. Stopping.")
+                    break
 
-                    max_retries = 3
-                    retry_count = 0
-                    success = False
-                    page_jobs_added = 0
+                # Reset restart counter on successful batch
+                browser_restart_count = 0
 
-                    # Try to navigate and process the page
-                    while retry_count < max_retries and not success:
+            except Exception as e:
+                logger.error(f"Fatal error during job processing: {e}")
+                browser_restart_count += 1
+                # Sleep a bit before retrying to avoid hammering the server
+                await asyncio.sleep(5)
+
+        logger.info(f"Total jobs added: {jobs_added}")
+        return jobs_added
+
+    async def _process_batch(self, filter_url, start_page, max_pages):
+        """Process a batch of pages with a fresh browser instance"""
+        batch_jobs_added = 0
+
+        try:
+            async with async_playwright() as p:
+                # Launch browser with minimal memory usage settings
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--disable-gpu',
+                        '--disable-dev-shm-usage',
+                        '--disable-setuid-sandbox',
+                        '--no-sandbox',
+                        '--single-process',
+                        '--disable-extensions',
+                        '--js-flags=--max-old-space-size=128'
+                    ]
+                )
+
+                try:
+                    # Process each page in the batch
+                    for page_offset in range(max_pages):
+                        current_page = start_page + page_offset
+                        url = f'{filter_url}&pn={current_page}'
+                        logger.info(f"Scraping page {current_page}: {url}")
+
+                        # Create a new context for this page
                         try:
-                            # Accept cookies on first page only
-                            if page_number == 1:
-                                await self._accept_cookies(page, url)
-                            else:
-                                # For subsequent pages, just navigate
-                                await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                            context = await browser.new_context(
+                                viewport={'width': 1280, 'height': 800},
+                                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
+                            )
+                        except PlaywrightError as e:
+                            logger.error(f"Failed to create browser context: {e}")
+                            return -1  # Signal an error
 
-                                # Wait for job listings with timeout
-                                await page.wait_for_selector('div[data-test="section-offers"]', timeout=10000)
+                        try:
+                            # Process the page
+                            page_jobs = await self._process_single_page(context, url, is_first_page=(current_page == 1))
 
-                            # Add short delay
-                            await asyncio.sleep(random.uniform(1, 2))
-
-                            # Scroll only halfway down the page to save memory
-                            await self._scroll_page_partial(page)
-
-                            # Get the HTML content in chunks and process immediately
-                            content = await page.content()
-
-                            # Process the content with BeautifulSoup using memory-efficient methods
-                            page_jobs_added = await self._process_page_content(content)
-                            jobs_added += page_jobs_added
-
-                            success = True
-                        except Exception as e:
-                            retry_count += 1
-                            if retry_count < max_retries:
-                                wait_time = 2 ** retry_count + random.uniform(0, 1)
-                                logger.warning(
-                                    f"Browser error: {e}. Retrying in {wait_time:.2f} seconds... (Attempt {retry_count}/{max_retries})"
-                                )
-                                await asyncio.sleep(wait_time)
-                            else:
-                                logger.error(
-                                    f'Failed to get offers from pracuj after multiple attempts. Last error: {e}')
-                                # Close the context to free memory even if we failed
+                            if page_jobs < 0:
+                                # Error in page processing
                                 await context.close()
-                                return jobs_added
+                                return -1
 
-                    # Close the context to release memory
-                    await context.close()
+                            batch_jobs_added += page_jobs
 
-                    # Update counters
-                    current_browser_pages += 1
-                    page_number += 1
+                            # If no jobs found on this page, stop processing this batch
+                            if page_jobs == 0:
+                                await context.close()
+                                break
 
-                    logger.info(f"Added {page_jobs_added} jobs from page {page_number - 1}")
+                        except Exception as e:
+                            logger.error(f"Error processing page {current_page}: {e}")
+                            try:
+                                await context.close()
+                            except:
+                                pass
+                            continue
+                        finally:
+                            # Always try to close the context
+                            try:
+                                await context.close()
+                            except:
+                                pass
 
-                    # Force garbage collection
-                    gc.collect()
+                        # Brief pause between pages
+                        await asyncio.sleep(random.uniform(1, 2))
 
-                    if page_jobs_added == 0:
-                        # If we didn't add any jobs on this page, it might mean we've already
-                        # scraped all new jobs, so we can stop
-                        logger.info("No new jobs found on this page. Stopping.")
-                        break
+                    return batch_jobs_added
 
-                    # Add a small delay between pages
-                    await asyncio.sleep(random.uniform(1, 2))
+                finally:
+                    # Always close the browser
+                    try:
+                        await browser.close()
+                    except:
+                        pass
 
-                logger.info(f"Total jobs added: {jobs_added}")
-                return jobs_added
+        except Exception as e:
+            logger.error(f"Error initializing Playwright: {e}")
+            return -1
 
-            finally:
-                # Make sure we close the browser to free resources
-                await browser.close()
+    async def _process_single_page(self, context, url, is_first_page=False):
+        """Process a single page and extract jobs"""
+        jobs_added = 0
+        max_retries = 2
+
+        for retry in range(max_retries):
+            try:
+                # Create a new page
+                page = await context.new_page()
+
+                try:
+                    # Navigate to the page
+                    if is_first_page:
+                        # Accept cookies on the first page
+                        await self._accept_cookies(page, url)
+                    else:
+                        await page.goto(url, wait_until='domcontentloaded', timeout=20000)
+                        await page.wait_for_selector('div[data-test="section-offers"]', timeout=10000)
+
+                    # Short delay
+                    await asyncio.sleep(1)
+
+                    # Minimal scrolling to save memory
+                    await page.evaluate('window.scrollBy(0, 800)')
+
+                    # Get content
+                    content = await page.content()
+
+                    # Process page content
+                    jobs_added = await self._process_page_content(content)
+                    return jobs_added
+
+                except PlaywrightError as e:
+                    if retry < max_retries - 1:
+                        logger.warning(f"Playwright error on retry {retry}: {e}")
+                        await asyncio.sleep(2)
+                    else:
+                        logger.error(f"Failed after {max_retries} retries: {e}")
+                        return -1
+                finally:
+                    # Always close the page
+                    try:
+                        await page.close()
+                    except:
+                        pass
+
+            except PlaywrightError as e:
+                logger.error(f"Failed to create page: {e}")
+                return -1
+
+        return jobs_added
 
     async def _process_page_content(self, content):
         """Process page content in a memory-efficient way"""
@@ -203,25 +258,43 @@ class PracujDownloader:
                             logger.error('Found job without id! Skipping.')
                             continue
 
+                        # Create a local function to avoid lambda issues
+                        def check_job_exists(jid):
+                            return Job.objects.filter(original_id=jid).exists()
+
                         # Check if job exists
                         job_exists_future = self._run_in_thread(
                             executor,
-                            lambda: Job.objects.filter(original_id=job_id).exists()
+                            lambda: check_job_exists(job_id)
                         )
-                        job_exists = await job_exists_future
+
+                        try:
+                            job_exists = await job_exists_future
+                        except Exception as e:
+                            logger.error(f"Error checking if job exists: {e}")
+                            continue
 
                         if job_exists:
                             logger.debug(f"Job {job_id} already exists in database. Skipping.")
                             continue
 
+                        # Local function to add job
+                        def add_job(jdata, jid):
+                            return self._add_job_quick(jdata, jid)
+
                         # Process the job
                         job_added_future = self._run_in_thread(
                             executor,
-                            lambda job_data=job_data, job_id=job_id: self._add_job_quick(job_data, job_id)
+                            lambda: add_job(job_data, job_id)
                         )
-                        await job_added_future
 
-                        jobs_added += 1
+                        try:
+                            job_added = await job_added_future
+                            if job_added:
+                                jobs_added += 1
+                        except Exception as e:
+                            logger.error(f"Error adding job: {e}")
+
                     except Exception as ex:
                         logger.error(f'Error while processing job: {ex}')
 
@@ -229,7 +302,6 @@ class PracujDownloader:
         soup = None
         jobs_section = None
         content = None
-        gc.collect()
 
         return jobs_added
 
@@ -241,7 +313,7 @@ class PracujDownloader:
     async def _accept_cookies(self, page, url):
         """Accept cookies dialog if it appears"""
         try:
-            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+            await page.goto(url, wait_until='domcontentloaded', timeout=20000)
 
             # Wait up to 5 seconds for the cookie dialog and accept it
             try:
@@ -262,14 +334,6 @@ class PracujDownloader:
 
         except Exception as e:
             logger.warning(f"Error during cookie acceptance: {e}")
-
-    async def _scroll_page_partial(self, page):
-        """Scroll down the page partially to save memory"""
-        # Only scroll halfway down to reduce memory usage
-        await page.evaluate('window.scrollBy(0, 800)')
-        await asyncio.sleep(0.5)
-        await page.evaluate('window.scrollBy(0, 800)')
-        await asyncio.sleep(0.5)
 
     def _add_job_quick(self, job_data, job_id):
         """Add a job to the database based on parsed job data"""
