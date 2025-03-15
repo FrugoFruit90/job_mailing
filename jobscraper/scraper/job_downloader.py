@@ -63,22 +63,23 @@ class PracujDownloader:
             try:
                 # Process a batch of pages with a fresh browser instance
                 logger.info(f"Starting new browser instance (restart #{browser_restart_count})")
-                batch_jobs_added = await self._process_batch(
+                result, failed_page_offset = await self._process_batch(
                     filter_url,
                     start_page=page_number,
                     max_pages=pages_per_browser if not max_pages else min(pages_per_browser,
                                                                           max_pages - page_number + 1)
                 )
 
-                if batch_jobs_added < 0:
+                if result < 0:
                     # Negative return indicates an error, retry with a fresh browser
-                    logger.warning("Browser error detected. Restarting browser.")
+                    logger.warning(f"Browser error detected on page offset {failed_page_offset}. Restarting browser.")
                     browser_restart_count += 1
-                    # Don't increment page_number - retry the same page
+                    # Adjust page_number to retry from the failed page
+                    page_number = page_number + failed_page_offset
                     continue
 
                 # Update counters
-                jobs_added += batch_jobs_added
+                jobs_added += result
                 page_number += pages_per_browser
 
                 # Force garbage collection between batches
@@ -131,7 +132,7 @@ class PracujDownloader:
                             )
                         except PlaywrightError as e:
                             logger.error(f"Failed to create browser context: {e}")
-                            return -1  # Signal an error
+                            return -1, page_offset  # Return failed page offset
 
                         try:
                             # Process the page
@@ -140,7 +141,7 @@ class PracujDownloader:
                             if page_jobs < 0:
                                 # Error in page processing
                                 await context.close()
-                                return -1
+                                return -1, page_offset  # Signal an error with page offset
 
                             batch_jobs_added += page_jobs
 
@@ -155,7 +156,7 @@ class PracujDownloader:
                                 await context.close()
                             except:
                                 pass
-                            continue
+                            return -1, page_offset  # Signal an error with page offset
                         finally:
                             # Always try to close the context
                             try:
@@ -166,7 +167,7 @@ class PracujDownloader:
                         # Brief pause between pages
                         await asyncio.sleep(random.uniform(1, 2))
 
-                    return batch_jobs_added
+                    return batch_jobs_added, -1  # Success, no page failure
 
                 finally:
                     # Always close the browser
@@ -177,7 +178,7 @@ class PracujDownloader:
 
         except Exception as e:
             logger.error(f"Error initializing Playwright: {e}")
-            return -1
+            return -1, 0  # First page failed
 
     async def _process_single_page(self, context, url, is_first_page=False):
         """Process a single page and extract jobs"""
